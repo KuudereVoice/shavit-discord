@@ -1,289 +1,293 @@
 #include <sourcemod>
 #include <shavit>
-#include <discord>
-#include <colorvariables>
-#undef REQUIRE_EXTENSIONS
-#include <ripext>
+#include <SteamWorks>
+#include <json>
+#include <steamworks-profileurl>
+
 #pragma newdecls required
 #pragma semicolon 1
 
-#define PLUGIN_VERSION "1.3"
 
+char g_sMapName[PLATFORM_MAX_PATH];
 
-char g_cCurrentMap[PLATFORM_MAX_PATH],
-g_szApiKey[64],
-g_szPictureURL[1024];
+int g_iMainColor;
+int g_iBonusColor;
 
-ConVar g_cvHostname,
-g_cvWebhook,
-g_cvMinimumrecords,
-g_cvThumbnailUrlRoot,
-g_cvBotUsername,
-g_cvFooterUrl,
-g_cvMainEmbedColor,
-g_cvBonusEmbedColor,
-g_cvSteamWebAPIKey;
-
-char g_cHostname[128];
-
-bool g_bRIPExt = false;
+ConVar g_cvHostname;
+ConVar g_cvWebhook;
+ConVar g_cvBotProfilePicture;
+ConVar g_cvMinimumrecords;
+ConVar g_cvBotUsername;
+ConVar g_cvFooterUrl;
+ConVar g_cvMainEmbedColor;
+ConVar g_cvBonusEmbedColor;
+ConVar g_cvSendBonusRecords;
+ConVar g_cvSendOffstyleRecords;
 
 public Plugin myinfo =
 {
-	name = "[shavit] Discord WR Bot",
-	author = "SlidyBat, improved by Sarrus",
+	name = "[shavit] Discord WR Bot (Steamworks)",
+	author = "SlidyBat, improved by Sarrus / nimmy",
 	description = "Makes discord bot post message when server WR is beaten",
-	version = PLUGIN_VERSION,
-	url = "steamcommunity.com/id/SlidyBat2"
+	version = "2.4",
+	url = "https://github.com/Nimmy2222/shavit-discord"
 }
 
 public void OnPluginStart()
 {
-	g_cvMinimumrecords = CreateConVar("sm_bhop_discord_min_record", "0", "Minimum number of records before they are sent to the discord channel.", _, true, 0.0);
-	g_cvWebhook = CreateConVar("sm_bhop_discord_webhook", "", "The webhook to the discord channel where you want record messages to be sent.", FCVAR_PROTECTED);
-	g_cvThumbnailUrlRoot = CreateConVar("sm_bhop_discord_thumbnail_root_url", "https://image.gametracker.com/images/maps/160x120/csgo/${mapname}.jpg", "The base url of where the Discord images are stored. Leave blank to disable.");
-	g_cvBotUsername = CreateConVar("sm_bhop_discord_username", "", "Username of the bot");
-	g_cvFooterUrl = CreateConVar("sm_bhop_discord_footer_url", "https://images-ext-1.discordapp.net/external/tfTL-r42Kv1qP4FFY6sQYDT1BBA2fXzDjVmcknAOwNI/https/images-ext-2.discordapp.net/external/3K6ho0iMG_dIVSlaf0hFluQFRGqC2jkO9vWFUlWYOnM/https/images-ext-2.discordapp.net/external/aO9crvExsYt5_mvL72MFLp92zqYJfTnteRqczxg7wWI/https/discordsl.com/assets/img/img.png", "The url of the footer icon, leave blank to disable.");
-	g_cvMainEmbedColor = CreateConVar("sm_bhop_discord_main_color", "#00ffff", "Color of embed for when main wr is beaten");
-	g_cvBonusEmbedColor = CreateConVar("sm_bhop_discord_bonus_color", "#ff0000", "Color of embed for when bonus wr is beaten");
-	g_cvSteamWebAPIKey = CreateConVar("kzt_discord_steam_api_key", "", "Allows the use of the player profile picture, leave blank to disable. The key can be obtained here: https://steamcommunity.com/dev/apikey", FCVAR_PROTECTED);
-
+	g_cvMinimumrecords = CreateConVar("shavit-discord-min-record", "0", "Minimum number of records before they are sent to the discord channel.", _, true, 0.0);
+	g_cvWebhook = CreateConVar("shavit-discord-webhook", "", "The webhook to the discord channel where you want record messages to be sent.", FCVAR_PROTECTED);
+	g_cvBotProfilePicture = CreateConVar("shavit-discord-profilepic", "https://i.imgur.com/fKL31aD.jpg", "link to pfp for the bot");
+	g_cvFooterUrl = CreateConVar("shavit-discord-footer-url", "https://images-ext-1.discordapp.net/external/tfTL-r42Kv1qP4FFY6sQYDT1BBA2fXzDjVmcknAOwNI/https/images-ext-2.discordapp.net/external/3K6ho0iMG_dIVSlaf0hFluQFRGqC2jkO9vWFUlWYOnM/https/images-ext-2.discordapp.net/external/aO9crvExsYt5_mvL72MFLp92zqYJfTnteRqczxg7wWI/https/discordsl.com/assets/img/img.png", "The url of the footer icon, leave blank to disable.");
+	g_cvBotUsername = CreateConVar("sm_bhop_discord_username", "World Records", "Username of the bot");
+	g_cvMainEmbedColor = CreateConVar("shavit-discord-main-color", "255, 0, 0", "Color of embed for when main wr is beaten");
+	g_cvBonusEmbedColor = CreateConVar("shavit-discord-bonus-color", "0, 255, 0", "Color of embed for when bonus wr is beaten");
+	g_cvSendBonusRecords = CreateConVar("shavit-discord-send-bonus", "1", "Whether to send bonus records or not 1 Enabled 0 Disabled");
+	g_cvSendOffstyleRecords = CreateConVar("shavit-discord-send-offstyle", "1", "Whether to send offstyle records or not 1 Enabled 0 Disabled");
 	g_cvHostname = FindConVar("hostname");
-	g_cvHostname.GetString( g_cHostname, sizeof( g_cHostname ) );
-	g_cvHostname.AddChangeHook( OnConVarChanged );
+
+	HookConVarChange(g_cvMainEmbedColor, CvarChanged);
+	HookConVarChange(g_cvBonusEmbedColor, CvarChanged);
+
+	UpdateColorCvars();
 
 	RegAdminCmd("sm_discordtest", CommandDiscordTest, ADMFLAG_ROOT);
-
-	GetConVarString(g_cvSteamWebAPIKey, g_szApiKey, sizeof g_szApiKey);
-
-	AutoExecConfig(true, "plugin.shavit-discord");
+	AutoExecConfig(true, "plugin.shavit-discord-steamworks");
 }
 
-
-public void OnAllPluginsLoaded()
+public void UpdateColorCvars()
 {
-	g_bRIPExt = LibraryExists("ripext");
+	char sMainColor[32];
+	char sBonusColor[32];
+	g_cvMainEmbedColor.GetString(sMainColor, sizeof(sMainColor));
+	g_cvBonusEmbedColor.GetString(sBonusColor, sizeof(sBonusColor));
+	g_iMainColor = RGBStrToShiftedInt(sMainColor);
+	g_iBonusColor = RGBStrToShiftedInt(sBonusColor);
 }
 
-
-public void OnLibraryAdded(const char[] name)
+int RGBStrToShiftedInt(char fullStr[32])
 {
-	if (StrEqual(name, "ripext"))
-	g_bRIPExt = true;
+	char rgbStrs[3][5];
+	int	 strs = ExplodeString(fullStr, ",", rgbStrs, sizeof(rgbStrs), sizeof(rgbStrs[]));
+	if (strs < 3)
+	{
+		return 255 << (2 * 8);
+	}
+
+	int adjustedInt;
+	for(int i = 0; i < 3; i++)
+	{
+		int color = StringToInt(rgbStrs[i]);
+		adjustedInt = (adjustedInt & ~(255 << ((2 - i) * 8))) | ((color & 255) << ((2 - i) * 8));
+	}
+	return adjustedInt;
 }
 
-
-public void OnLibraryRemoved(const char[] name)
+public void CvarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
-	if (StrEqual(name, "ripext"))
-	g_bRIPExt = false;
+	UpdateColorCvars();
 }
-
-
-public void OnConVarChanged( ConVar convar, const char[] oldValue, const char[] newValue )
-{
-	g_cvHostname.GetString( g_cHostname, sizeof( g_cHostname ) );
-}
-
 
 public void OnMapStart()
 {
-	GetCurrentMap( g_cCurrentMap, sizeof g_cCurrentMap );
-	RemoveWorkshop(g_cCurrentMap, sizeof g_cCurrentMap );
-	GetConVarString(g_cvSteamWebAPIKey, g_szApiKey, sizeof g_szApiKey);
+	GetCurrentMap(g_sMapName, sizeof(g_sMapName));
+	RemoveWorkshop(g_sMapName, sizeof(g_sMapName));
 }
-
 
 public Action CommandDiscordTest(int client, int args)
 {
-	Shavit_OnWorldRecord(client, 1, 12.3, 35, 23, 93.25, 1, 14.01, 14.5, 82.3, 0.0, 0.0, 0);
-	CPrintToChat(client, "{green}[shavit-discord] {default}Discord Test Message has been sent.");
+	int track = GetCmdArgInt(1);
+	int style = GetCmdArgInt(2);
+
+	Shavit_OnWorldRecord(client, style, 12.3, 35, 23, 93.25, track, 17.01);
+	PrintToChat(client, "[shavit-discord] Discord Test Message has been sent.");
+	return Plugin_Handled;
 }
 
+//listen
 
-public void Shavit_OnWorldRecord(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr, float oldtime, float perfs)
+public void Shavit_OnWorldRecord(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr)
 {
-	if( GetConVarInt(g_cvMinimumrecords) > 0 && Shavit_GetRecordAmount( style, track ) < GetConVarInt(g_cvMinimumrecords) ) // dont print if its a new record to avoid spam for new maps
-	return;
-	if(!StrEqual(g_szApiKey, "") && g_bRIPExt)
-	GetProfilePictureURL(client, style, time, jumps, strafes, sync, track, oldwr, oldtime, perfs);
-	else
-	sendDiscordAnnouncement(client, style, time, jumps, strafes, sync, track, oldwr, oldtime, perfs);
-}
-
-
-stock void sendDiscordAnnouncement(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr, float oldtime, float perfs)
-{
-	char sWebhook[512],
-	szMainColor[64],
-	szBonusColor[64],
-	szBotUsername[128];
-
-	GetConVarString(g_cvWebhook, sWebhook, sizeof sWebhook);
-	GetConVarString(g_cvMainEmbedColor, szMainColor, sizeof szMainColor);
-	GetConVarString(g_cvBonusEmbedColor, szBonusColor, sizeof szBonusColor);
-	GetConVarString(g_cvBotUsername, szBotUsername, sizeof szBotUsername);
-
-	DiscordWebHook hook = new DiscordWebHook( sWebhook );
-	hook.SlackMode = true;
-	hook.SetUsername( szBotUsername );
-
-	MessageEmbed embed = new MessageEmbed();
-
-	embed.SetColor( ( track == Track_Main ) ? szMainColor : szBonusColor );
-
-	char styleName[128];
-	Shavit_GetStyleStrings( style, sStyleName, styleName, sizeof( styleName ));
-
-	char buffer[512];
-	if(track == Track_Main) {
-		Format( buffer, sizeof( buffer ), "__**New World Record**__ | **%s** - **%s**", g_cCurrentMap, styleName );
-	} else {
-		Format( buffer, sizeof( buffer ), "__**New Bonus #%i World Record**__ | **%s** - **%s**", track, g_cCurrentMap, styleName );
-	}
-	embed.SetTitle( buffer );
-
-	char steamid[65];
-	GetClientAuthId( client, AuthId_SteamID64, steamid, sizeof( steamid ) );
-	Format( buffer, sizeof( buffer ), "[%N](http://www.steamcommunity.com/profiles/%s)", client, steamid );
-	embed.AddField( "Player:", buffer, true	);
-
-	char szOldTime[128];
-	FormatSeconds( time, buffer, sizeof( buffer ) );
-	FormatSeconds( time - oldtime, szOldTime, sizeof( szOldTime ) );
-
-	Format( buffer, sizeof( buffer ), "%ss (%ss)", buffer, szOldTime );
-	embed.AddField( "Time:", buffer, true );
-
-	FormatSeconds( oldwr, szOldTime, sizeof( szOldTime ) );
-	Format( szOldTime, sizeof( szOldTime ), "%ss", szOldTime );
-	embed.AddField( "Previous Time:", szOldTime, true );
-
-	Format( buffer, sizeof( buffer ), "**Strafes**: %i  **Sync**: %.2f%%  **Jumps**: %i  **Perfect jumps**: %.2f%%", strafes, sync, jumps, perfs );
-	embed.AddField( "Stats:", buffer, false );
-
-
-	//Send the image of the map
-	char szUrl[1024];
-
-	GetConVarString(g_cvThumbnailUrlRoot, szUrl, 1024);
-
-	if (!StrEqual(szUrl, ""))
+	if(g_cvMinimumrecords.IntValue > 0 && Shavit_GetRecordAmount(style, track) < g_cvMinimumrecords.IntValue)
 	{
-		ReplaceString(szUrl, sizeof szUrl, "${mapname}", g_cCurrentMap);
+		return;
 	}
 
-	if(StrEqual(g_szPictureURL, ""))
-	embed.SetThumb(szUrl);
+	if(!(g_cvSendOffstyleRecords.IntValue) && style != 0)
+	{
+		return;
+	}
+
+	if(!(g_cvSendBonusRecords.IntValue) && track != Track_Main)
+	{
+		return;
+	}
+
+	FormatEmbedMessage(client, style, time, jumps, strafes, sync, track, oldwr);
+}
+
+//http
+
+void FormatEmbedMessage(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr)
+{
+	char message[512];
+	Shavit_GetStyleStrings(style, sStyleName, message, sizeof(message));
+
+	char recordTxt[512];
+	if(track == Track_Main)
+	{
+		Format(recordTxt, sizeof(recordTxt), "__**%s**__ - **Main** - **%s**", g_sMapName, message);
+	} else
+	{
+		Format(recordTxt, sizeof(recordTxt), "__**%s**__ - **Bonus #%i** - **%s**", g_sMapName, track, message);
+	}
+
+	GetClientAuthId(client, AuthId_SteamID64, message, sizeof(message));
+
+	char name[MAX_NAME_LENGTH];
+	GetClientName(client, name, sizeof(name));
+	SanitizeName(name);
+
+	char playerUrl[512];
+	Format(playerUrl, sizeof(playerUrl), "http://www.steamcommunity.com/profiles/%s", message);
+
+	JSON_Object author = new JSON_Object();
+	author.SetString("name", name);
+	author.SetString("url", playerUrl);
+
+	char playerProfilePicture[1024];
+	if(Sw_GetProfileUrl(client, playerProfilePicture, sizeof(playerProfilePicture)))
+	{
+		author.SetString("icon_url", playerProfilePicture);
+	}
 	else
 	{
-		embed.SetImage(szUrl);
-		embed.SetThumb(g_szPictureURL);
+		PrintToConsole(client, "Shavit-Discord: Failed to find profile picture URL");
 	}
 
-	char szFooterUrl[1024];
-	GetConVarString(g_cvFooterUrl, szFooterUrl, sizeof szFooterUrl);
-	if (!StrEqual(szFooterUrl, ""))
-	embed.SetFooterIcon( szFooterUrl );
 
-	Format( buffer, sizeof( buffer ), "Server: %s", g_cHostname );
-	embed.SetFooter( buffer );
-
-	hook.Embed( embed );
-	hook.Send();
-}
+	FormatSeconds(time, message, sizeof(message));
+	Format(message, sizeof(message), "%ss", message);
+	char oldTime[128];
+	FormatSeconds(time - oldwr, oldTime, sizeof(oldTime));
+	Format(message, sizeof(message), "%s (%ss)", message, oldTime);
 
 
-stock void GetProfilePictureURL( int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr, float oldtime, float perfs)
-{
-	HTTPRequest httpRequest;
+	JSON_Object timeField = new JSON_Object();
+	timeField.SetString("name", "Time");
+	timeField.SetString("value", message);
+	timeField.SetBool("inline", true);
 
-	DataPack pack = new DataPack();
-	pack.WriteCell(client);
-	pack.WriteCell(style);
-	pack.WriteCell(time);
-	pack.WriteCell(jumps);
-	pack.WriteCell(strafes);
-	pack.WriteCell(sync);
-	pack.WriteCell(track);
-	pack.WriteCell(oldwr);
-	pack.WriteCell(oldtime);
-	pack.WriteCell(perfs);
-	pack.Reset();
+	JSON_Object statsField = new JSON_Object();
+	Format(message, sizeof(message), "**Strafes**: %i  **Sync**: %.2f%%  **Jumps**: %i", strafes, sync, jumps);
+	statsField.SetString("name", "Stats");
+	statsField.SetString("value", message);
+	statsField.SetBool("inline", true);
 
-	char szRequestBuffer[1024],
-	szSteamID[64];
+	JSON_Object footerField = new JSON_Object();
+	char hostname[512];
+	g_cvHostname.GetString(hostname, sizeof(hostname));
+	Format(message, sizeof(message), "%s", hostname);
+	footerField.SetString("text", message);
 
-	GetClientAuthId(client, AuthId_SteamID64, szSteamID, sizeof szSteamID, true);
-
-	Format(szRequestBuffer, sizeof szRequestBuffer, "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=%s&steamids=%s&format=json", g_szApiKey,szSteamID);
-	httpRequest = new HTTPRequest(szRequestBuffer);
-	httpRequest.Get(OnResponseReceived, pack);
-}
-
-
-stock void OnResponseReceived(HTTPResponse response, DataPack pack)
-{
-	pack.Reset();
-	int client = pack.ReadCell();
-	int style = pack.ReadCell();
-	float time = pack.ReadCell();
-	int jumps = pack.ReadCell();
-	int strafes = pack.ReadCell();
-	float sync = pack.ReadCell();
-	int track = pack.ReadCell();
-	float oldwr = pack.ReadCell();
-	float oldtime = pack.ReadCell();
-	float perfs = pack.ReadCell();
-
-	if (response.Status != HTTPStatus_OK)
-	return;
-
-	JSONObject objects = view_as<JSONObject>(response.Data);
-	JSONObject Response = view_as<JSONObject>(objects.Get("response"));
-	JSONArray players = view_as<JSONArray>(Response.Get("players"));
-	int playerlen = players.Length;
-
-	JSONObject player;
-	for (int i = 0; i < playerlen; i++)
+	char footerUrl[1024];
+	g_cvFooterUrl.GetString(footerUrl, sizeof(footerUrl));
+	if (!StrEqual(footerUrl, ""))
 	{
-		player = view_as<JSONObject>(players.Get(i));
-		player.GetString("avatarmedium", g_szPictureURL, sizeof(g_szPictureURL));
-		delete player;
+		footerField.SetString("icon_url", footerUrl);
 	}
-	sendDiscordAnnouncement(client, style, time, jumps, strafes, sync, track, oldwr, oldtime, perfs);
+
+	JSON_Array fields = new JSON_Array();
+	fields.PushObject(timeField);
+	fields.PushObject(statsField);
+
+	JSON_Object embed = new JSON_Object();
+	embed.SetString("title", recordTxt);
+
+	char color[32];
+	Format(color, sizeof(color), "%i", (track == Track_Main && style == 0) ? g_iMainColor:g_iBonusColor);
+
+	embed.SetString("color", color);
+	embed.SetObject("fields", fields);
+	embed.SetObject("author", author);
+	embed.SetObject("footer", footerField);
+
+	JSON_Array embeds = new JSON_Array();
+	embeds.PushObject(embed);
+
+	JSON_Object json = new JSON_Object();
+
+	char botUserName[128];
+	g_cvBotUsername.GetString(botUserName, sizeof(botUserName));
+	json.SetString("username", botUserName);
+
+	char profilePictureUrl[1024];
+	g_cvBotProfilePicture.GetString(profilePictureUrl, sizeof(profilePictureUrl));
+	json.SetString("avatar_url", profilePictureUrl);
+	json.SetObject("embeds", embeds);
+
+	SendMessage(json);
+	json_cleanup_and_delete(json);
 }
 
-
-stock void RemoveWorkshop(char[] szMapName, int len)
+void SendMessage(JSON_Object json)
 {
-	int i=0;
-	char szBuffer[16], szCompare[1] = "/";
+	char webhook[256];
+	g_cvWebhook.GetString(webhook, sizeof(webhook));
 
+	if (webhook[0] == '\0')
+	{
+		LogError("Discord webhook is not set.");
+		return;
+	}
+
+	char body[2048];
+	json.Encode(body, sizeof(body));
+
+	Handle request = SteamWorks_CreateHTTPRequest(k_EHTTPMethodPOST, webhook);
+	SteamWorks_SetHTTPRequestRawPostBody(request, "application/json", body, strlen(body));
+	SteamWorks_SetHTTPCallbacks(request, OnMessageSent);
+	SteamWorks_SendHTTPRequest(request);
+}
+
+public void OnMessageSent(Handle request, bool failure, bool requestSuccessful, EHTTPStatusCode statusCode, DataPack pack)
+{
+	if (failure || !requestSuccessful || statusCode != k_EHTTPStatusCode204NoContent)
+	{
+		LogError("Failed to send message to Discord. Response status: %d.", statusCode);
+	}
+
+	delete request;
+}
+
+//util
+
+void SanitizeName(char[] name)
+{
+	ReplaceString(name, MAX_NAME_LENGTH, "(", "", false);
+	ReplaceString(name, MAX_NAME_LENGTH, ")", "", false);
+	ReplaceString(name, MAX_NAME_LENGTH, "]", "", false);
+	ReplaceString(name, MAX_NAME_LENGTH, "[", "", false);
+}
+
+void RemoveWorkshop(char[] mapName, int len)
+{
 	// Return if "workshop/" is not in the mapname
-	if(ReplaceString(szMapName, len, "workshop/", "", true) != 1)
-	return;
+	if(ReplaceString(mapName, len, "workshop/", "", true) != 1)
+	{
+		return;
+	}
 
 	// Find the index of the last /
-	do
+	int i=0;
+	char compare[1] = "/";
+	char buffer[16];
+	while(mapName[i] != compare[0])
 	{
-		szBuffer[i] = szMapName[i];
+		buffer[i] = mapName[i];
 		i++;
 	}
-	while(szMapName[i] != szCompare[0]);
-	szBuffer[i] = szCompare[0];
-	ReplaceString(szMapName, len, szBuffer, "", true);
-}
 
-public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
-{
-	MarkNativeAsOptional("HTTPClient.HTTPClient");
-	MarkNativeAsOptional("HTTPClient.SetHeader");
-	MarkNativeAsOptional("HTTPClient.Get");
-	MarkNativeAsOptional("JSONObject.Get");
-	MarkNativeAsOptional("JSONObject.GetString");
-	MarkNativeAsOptional("HTTPResponse.Status.get");
-	MarkNativeAsOptional("JSONArray.Length.get");
-	MarkNativeAsOptional("JSONArray.Get");
-	MarkNativeAsOptional("HTTPResponse.Data.get");
+	buffer[i] = compare[0];
+	ReplaceString(mapName, len, buffer, "", true);
 }
